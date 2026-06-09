@@ -1,0 +1,20 @@
+
+
+---
+title: "SHARE analüüs — andmete import ja puhastus"
+author: "Evelin Roasto"
+date: today
+format: html
+---
+
+## Mida see dokument teeb
+
+Siin laeme sisse SHARE 9. laine Eesti andmed, puhastame need ja loome elukorralduse rühmad.
+
+## Pakettide laadimine
+
+```{r}
+library(haven)
+library(tidyverse)
+library(labelled)
+```
