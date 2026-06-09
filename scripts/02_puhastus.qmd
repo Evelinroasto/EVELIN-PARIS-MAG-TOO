@@ -171,6 +171,4 @@ cat("Veerge:", ncol(andmed_puhas), "\n")
 ##### Mida tegime:
 - SHARE negatiivsed koodid (-1 kuni -15) asendatud NA-ga
 - Loodud 4 elukorralduse rühma (`hhsize` + `partnerinhh` alusel)
-- Loodud vanusrühm (50-64, 65-74, 75+)
-- Sugu faktoriks (mees/naine)
 - Puhastatud andmestik salvestatud `andmed_puhas.rds`
