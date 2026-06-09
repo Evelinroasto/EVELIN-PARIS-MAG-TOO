@@ -1,0 +1,13 @@
+# SHARE andmefailid — EI tohi GitHubi (kasutuslepingu nõue)
+data/
+*.sav
+*.rds
+*.pkl
+
+# R töökeskkond
+.Rhistory
+.RData
+.Rproj.user/
+
+# macOS
+.DS_Store
