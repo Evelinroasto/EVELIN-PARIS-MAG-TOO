@@ -1,0 +1,176 @@
+---
+title: "SHARE analüüs — andmete puhastus"
+author: "Evelin Roasto"
+date: today
+format: html
+---
+
+## Mida see dokument teeb
+
+Laeme eelmises skriptis loodud andmestiku, puhastame SHARE negatiivsed koodid (NA-ks),
+loome elukorralduse rühmad ja salvestame puhastatud andmestiku .rds failina.
+
+## Pakettide laadimine
+
+```{r}
+library(tidyverse)
+library(labelled)
+```
+
+## Andmete laadimine
+
+```{r}
+# NB! Enne selle skripti käivitamist pead käivitama 01_andmete_import.qmd,
+# et andmestik 'andmed' oleks mälus.
+
+if (!exists("andmed")) stop("Andmestik 'andmed' ei ole mälus. Käivita esmalt 01_andmete_import.qmd.")
+nrow(andmed)
+ncol(andmed)
+```
+
+## 1. SHARE negatiivsed koodid → NA
+
+SHARE kasutab negatiivseid arve puuduvate väärtuste tähistamiseks:
+
+| Kood | Tähendus |
+|------|----------|
+| -1   | Ei tea |
+| -2   | Keeldub vastamast |
+| -3   | Ei kohaldu (küsimust ei esitatud) |
+| -9   | Intervjueerija kood — puuduv |
+| -12  | Puuduv — koostöö probleemi tõttu |
+| -13  | Puuduv — ankeedi koodi tõttu |
+| -14  | Puuduv — kõik jäetud vahele |
+| -15  | Puuduv — eelmine intervjuu kood |
+
+Kõik need asendame NA-ga enne analüüsi.
+
+```{r}
+# Funktsioon: asenda kõik negatiivsed väärtused NA-ga
+asenda_na <- function(x) {
+  if (is.numeric(x)) {
+    x[x < 0] <- NA
+  }
+  return(x)
+}
+
+# Rakenda kõikidele numbrilistele veergudele
+andmed_puhas <- andmed |>
+  mutate(across(where(is.numeric), asenda_na))
+
+# Kontroll: vaatame dn014_ (perekonnaseis) enne ja pärast
+summary(andmed$dn014_)       # enne: peaks olema negatiivseid
+summary(andmed_puhas$dn014_) # pärast: min peaks olema >= 1
+```
+
+## 2. Elukorralduse rühmad
+
+Kasutame kahte muutujat: `hhsize` (leibkonna suurus) ja `partnerinhh` (partner leibkonnas).
+
+**Neli rühma:**
+
+| Rühm | Kriteerium | Kirjeldus |
+|------|-----------|-----------|
+| uksi | `hhsize == 1` | Elab üksi |
+| partneriga | `hhsize == 2 & partnerinhh == 1` | Elab ainult partneriga |
+| partner_teistega | `hhsize > 2 & partnerinhh == 1` | Elab partneriga + teistega |
+| teistega | `hhsize >= 2 & partnerinhh != 1` | Elab teistega (ilma partnerita) |
+
+```{r}
+andmed_puhas <- andmed_puhas |>
+  mutate(
+    elukorraldus = case_when(
+      hhsize == 1                                              ~ "uksi",
+      hhsize == 2 & partnerinhh == 1                          ~ "partneriga",
+      hhsize > 2  & partnerinhh == 1                          ~ "partner_teistega",
+      hhsize >= 2 & (is.na(partnerinhh) | partnerinhh != 1)  ~ "teistega",
+      TRUE ~ NA_character_
+    ),
+    elukorraldus = factor(
+      elukorraldus,
+      levels = c("uksi", "partneriga", "partner_teistega", "teistega")
+    )
+  )
+
+# Jaotus
+table(andmed_puhas$elukorraldus, useNA = "always")
+```
+
+```{r}
+# Protsendid
+andmed_puhas |>
+  count(elukorraldus) |>
+  mutate(protsent = round(n / sum(n, na.rm = TRUE) * 100, 1))
+```
+
+## 3. Vanusrühm
+
+```{r}
+andmed_puhas <- andmed_puhas |>
+  mutate(
+    vanusryhm = case_when(
+      age2022 >= 50 & age2022 <= 64 ~ "50-64",
+      age2022 >= 65 & age2022 <= 74 ~ "65-74",
+      age2022 >= 75                 ~ "75+",
+      TRUE ~ NA_character_
+    ),
+    vanusryhm = factor(vanusryhm, levels = c("50-64", "65-74", "75+"))
+  )
+
+table(andmed_puhas$vanusryhm, useNA = "always")
+```
+
+## 4. Soo muutuja faktoriks
+
+```{r}
+# Vaatame praeguseid väärtusi
+table(andmed_puhas$gender, useNA = "always")
+val_labels(andmed_puhas$gender)
+```
+
+```{r}
+# SHARE standard: 1 = mees, 2 = naine
+andmed_puhas <- andmed_puhas |>
+  mutate(
+    sugu = factor(gender, levels = c(1, 2), labels = c("mees", "naine"))
+  )
+
+table(andmed_puhas$sugu, useNA = "always")
+```
+
+## 5. Kiire ülevaade puhastatud andmestikust
+
+```{r}
+# Puuduvate väärtuste arv olulistes muutujates
+andmed_puhas |>
+  select(elukorraldus, vanusryhm, sugu, eurod, ph003_, cciw_w9) |>
+  summarise(across(everything(), ~sum(is.na(.)))) |>
+  pivot_longer(everything(), names_to = "muutuja", values_to = "NA_arv") |>
+  mutate(NA_protsent = round(NA_arv / nrow(andmed_puhas) * 100, 1))
+```
+
+```{r}
+glimpse(andmed_puhas)
+```
+
+## 6. Salvesta puhastatud andmestik
+
+```{r}
+# Salvesta .rds failina — kiire laadimine tulevastesse skriptidesse
+OUTPUT_DIR <- "~/Documents/Claude/Projects/Magitritöö andmete analüüs/andmed"
+dir.create(OUTPUT_DIR, showWarnings = FALSE)
+
+saveRDS(andmed_puhas, file.path(OUTPUT_DIR, "andmed_puhas.rds"))
+cat("Salvestatud:", file.path(OUTPUT_DIR, "andmed_puhas.rds"), "\n")
+cat("Ridu:", nrow(andmed_puhas), "\n")
+cat("Veerge:", ncol(andmed_puhas), "\n")
+```
+
+---
+
+##### Mida tegime:
+- SHARE negatiivsed koodid (-1 kuni -15) asendatud NA-ga
+- Loodud 4 elukorralduse rühma (`hhsize` + `partnerinhh` alusel)
+- Loodud vanusrühm (50-64, 65-74, 75+)
+- Sugu faktoriks (mees/naine)
+- Puhastatud andmestik salvestatud `andmed_puhas.rds`
