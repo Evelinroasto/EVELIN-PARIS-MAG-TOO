@@ -18,3 +18,396 @@ library(haven)
 library(tidyverse)
 library(labelled)
 ```
+## Andmete asukoht
+
+```{r}
+# Muuda see tee vastavaks oma arvutile
+DATA_DIR <- "~/Library/Mobile Documents/com~apple~CloudDocs/Evelin KOOL/Magistritöö 1/raw data/sharew9_rel9-0-0_ALL_datasets_spss"
+```
+
+## Esimene fail: cv_r
+
+cv_r on põhidemograafia moodul — sisaldab vanust, sugu, leibkonna suurust ja partnerinfot.
+
+```{r}
+cv_r <- read_sav(file.path(DATA_DIR, "sharew9_rel9-0-0_cv_r.sav"))
+
+```
+
+## Vaatame, mis on eesti kood
+
+```{r}
+# Vaata kõiki riike ja nende ridade arvu
+cv_r |> count(country) |> print(n = 50)
+```
+
+## Filtreerime eesti andmed
+
+```{r}
+cv_r_ee <- cv_r |> filter(country == 35)
+nrow(cv_r_ee)
+```
+
+##Vaatame, mis kaasamistingimused on olemas ja otsustame, mis alustel valimisse võtta
+
+```{r}
+# Vaata muutujate nimesid
+names(cv_r_ee)
+```
+
+##Enne filtreerimist vaatame, mis väärtused cvresp ja interview sees on
+
+```{r}
+table(cv_r_ee$cvresp)
+table(cv_r_ee$interview)
+```
+
+###Vaatame mida koodid 0-2 tähendavad
+```{r}
+val_labels(cv_r_ee$cvresp)
+val_labels(cv_r_ee$interview)
+```
+
+
+### Välistame kolme kriteeriumi alusel:
+1. interview != 1 — ei ole põhiintervjuud
+Need on inimesed, kelle kohta kas ei toimunud intervjuud üldse (0), või on tegemist End-of-Life intervjuuga (2) — see tähendab, et inimene on vahepeal surnud ja lähedane vastas tema elu lõpu kohta tagasivaatavalt. Sinu töö uurib elavaid inimesi nende endi kogemusest.
+2. cvresp != 1 — ei vastanud ise
+Proxy-vastajad (2) on inimesed, kes olid intervjuu ajal liiga haige, dementne või muul põhjusel võimetu ise vastama — keegi teine (abikaasa, laps) vastas nende eest. Nendel puuduvad subjektiivne tervis, EURO-D depressiooniskaala ja paljud teised tunnused, mida sinu töös kasutad.
+3. age2022 < 50 — alla 50-aastased
+SHARE intervjueerib leibkonna kõiki täiskasvanuid, sh nooremaid partnereid. Sinu uurimisküsimus on kesk- ja vanemaealised (50+), seega nooremad välja.
+
+```{r}
+ee_50 <- cv_r_ee |>
+  filter(interview == 1,
+         age2022 >= 50)
+
+nrow(ee_50)
+```
+
+## Vajalike veergude valimine cv_r moodulist
+### Esialgsel hinnangul on meil vaja allolevadi mooduleid: MoodulFailMis sealt võtamecv_rsharew9_..._cv_r.savmergeid, vanus, sugu, hhsize, partnerinhh, psu, stratum1 ✓ juba tehtuddnsharew9_..._dn.savperekonnaseis, haridusaastadgv_iscedsharew9_..._gv_isced.savISCED haridustaseepsharew9_..._ep.savtööstaatus, pensionilgv_imputationssharew9_..._gv_imputations.savsissetuleksnsharew9_..._sn.savsotsiaalvõrgustik, üksildusphsharew9_..._ph.savsubjektiivne tervisgv_healthsharew9_..._gv_health.savEURO-D, ADL, IADLhcsharew9_..._hc.savtervishoiuteenuste kasutaminegv_weightssharew9_..._gv_weights.savkaal (cciw_w9)
+
+### Laeme moodulid eraldi, filtreerime eesti ja ühendame kõik need mergeri alusel, siis puhastame puuduvad väärtused ja lisame kaalud
+
+
+## Alustema dn moodulist
+
+```{r}
+dn <- read_sav(file.path(DATA_DIR, "sharew9_rel9-0-0_dn.sav"))
+
+dn_ee <- dn |>
+  filter(country == 35) |>
+  select(
+    mergeid,
+    dn014_,   # perekonnaseis
+    dn010_    # haridusaastad
+  )
+
+glimpse(dn_ee)
+```
+
+### dn on 4486 rida, aga ee_50 on 4453. See on okei — dn sisaldab ka alla 50-aastaseid Eesti vastajaid. Ühendamisel mergeid alusel jäävad automaatselt alles ainult need 4453.
+
+## Lisame järgmise ploki - gv_isced
+
+
+
+```{r}
+gv_isced <- read_sav(file.path(DATA_DIR, "sharew9_rel9-0-0_gv_isced.sav"))
+
+isced_ee <- gv_isced |>
+  filter(country == 35) |>
+  select(
+    mergeid,
+    isced1997_r   # ISCED haridustase (0–6)
+  )
+
+glimpse(isced_ee)
+```
+
+##Jätkame ep (tööstaatusega)
+
+```{r}
+ep <- read_sav(file.path(DATA_DIR, "sharew9_rel9-0-0_ep.sav"))
+
+ep_ee <- ep |>
+  filter(country == 35) |>
+  select(
+    mergeid,
+    ep005_   # tööturustaatus (1=töötab, 2=iseendale tööandja, 3=töötus, 4=pensionil jne)
+  )
+
+glimpse(ep_ee)
+```
+
+## Järgmisena gv_imputations (sissetulek). See moodul on suur ja tehniline — võtame ainult ühe imputs-i sissetuleku. implicat == 1 tähendab, et võtame ainult esimese imputs-i viiest — see on lihtsustus, mida saab hiljem täpsustada.
+
+```{r}
+gv_imp <- read_sav(file.path(DATA_DIR, "sharew9_rel9-0-0_gv_imputations.sav"))
+
+imp_ee <- gv_imp |>
+  filter(country == 35, implicat == 1) |>
+  select(
+    mergeid,
+    thinc2   # leibkonna netotulu (imputeeritud, 1. imputs)
+  )
+
+glimpse(imp_ee)
+```
+### Järgmisena sn moodul (sotsiaalvõrgustik). Enne koodiplokki — vaatame, mis seal sees on, sest sn on suur moodul ja muutujate nimed pole ilmsed
+
+```{r}
+sn <- read_sav(file.path(DATA_DIR, "sharew9_rel9-0-0_sn.sav"))
+
+sn_ee <- sn |> filter(country == 35)
+
+names(sn_ee)
+```
+### Siin on olulised muutujad minu tööjaoks:
+
+sn003a_ — sotsiaalvõrgustiku suurus (mitu lähedast inimest nimetati)
+sn012_ — kui tihti tunneb end üksikuna
+sn014_ — kui tihti tunneb end isoleerituna
+sn017_ — kui tihti tunneb end kõrvalejäetuna
+
+sn012_, sn014_, sn017_ moodustavad koos SHARE üksilduse 3-küsimuse skaala (UCLA lühiversioon).
+
+```{r}
+sn_ee <- sn |>
+  filter(country == 35) |>
+  select(
+    mergeid,
+    sn003a_,   # sotsiaalvõrgustiku suurus
+    sn012_,    # tunneb end üksikuna
+    sn014_,    # tunneb end isoleerituna
+    sn017_     # tunneb end kõrvalejäetuna
+  )
+
+glimpse(sn_ee)
+```
+##Nüüd ph moodul (subjektiivne tervis)
+```{r}
+ph <- read_sav(file.path(DATA_DIR, "sharew9_rel9-0-0_ph.sav"))
+
+ph_ee <- ph |>
+  filter(country == 35) |>
+  select(
+    mergeid,
+    ph003_   # subjektiivne tervis (1=suurepärane ... 5=halb)
+  )
+
+glimpse(ph_ee)
+```
+
+##Nüüd gv_health
+
+```{r}
+gv_health <- read_sav(file.path(DATA_DIR, "sharew9_rel9-0-0_gv_health.sav"))
+
+health_ee <- gv_health |>
+  filter(country == 35) |>
+  select(
+    mergeid,
+    eurod,   # depressiivsed sümptomid (0–12)
+    adl,     # ADL piirangud
+    iadl     # IADL piirangud
+  )
+
+glimpse(health_ee)
+```
+
+### Nüüd hc, aga enne vaatame, mis seal sees on
+
+```{r}
+hc <- read_sav(file.path(DATA_DIR, "sharew9_rel9-0-0_hc.sav"))
+
+hc_ee <- hc |> filter(country == 35)
+
+names(hc_ee)
+```
+
+```{r}
+hc_ee |>
+  select(hc010_, hc012_, hc013_, hc014_, hc029_, hc031_, hc033_, hc063_, hc064_) |>
+  glimpse()
+```
+```{r}
+hc_ee |>
+  select(hc010_, hc012_, hc013_, hc014_, hc029_, hc031_, hc033_, hc063_, hc064_) |>
+  map(attr, "label")
+```
+
+```{r}
+hc_ee |>
+  select(hc035_, hc036_, hc037_, hc113_, hc125_, hc602_, hc696_, hc751_, hc876_, hc877_) |>
+  map(attr, "label")
+```
+
+```{r}
+hc_ee |>
+  select(hc884_, hc885_, hc886_, hc887_, hc888_, hc889_, hc890_) |>
+  map(attr, "label")
+```
+```{r}
+hc_ee |>
+  select(hc841d1, hc841dno, hc843d1, hc843dno) |>
+  map(attr, "label")
+```
+
+###Lisame siit moodulist: Arsti kontaktid:
+
+hc602_ — arsti/õega kontaktide koguarv (viimased 12 kuud)
+hc876_ — perearsti kontaktid
+hc877_ — eriarsti kontaktid
+
+Haiglaravi:
+
+hc012_ — haiglas viibimine (jah/ei)
+hc013_ — haiglas viibimiste arv
+hc014_ — öid haiglas kokku
+hc888_ — hospitaliseerimine: plaaniline või erakorraline
+
+Ennetav tervishoiuteenuse kasutamine:
+
+hc010_ — hambaarsti külastus
+hc884_ — gripivaktsiin
+hc885_ — silmaarsti kontroll
+hc886_ — mammograaf (ainult naised)
+hc887_ — käärsoole vähisõeluuring
+
+Rahuldamata vajadus:
+
+hc841d1–hc841d7, hc841dno — loobus teenusest kulude tõttu
+hc843d1–hc843d7, hc843dno — loobus teenusest kättesaadavuse tõttu
+
+Lisaks (kontekst/segaja):
+
+hc113_ — täiendav ravikindlustus
+hc125_ — rahulolu ravikindlustusega
+
+```{r}
+hc_ee <- hc |>
+  filter(country == 35) |>
+  select(
+    mergeid,
+    # Arsti kontaktid
+    hc602_,    # arsti/õega kontaktide koguarv
+    hc876_,    # perearsti kontaktid
+    hc877_,    # eriarsti kontaktid
+    # Haiglaravi
+    hc012_,    # haiglas viibimine (jah/ei)
+    hc013_,    # haiglas viibimiste arv
+    hc014_,    # öid haiglas
+    hc888_,    # hospitaliseerimine: plaaniline või erakorraline
+    # Ennetav tervishoiuteenuste kasutamine
+    hc010_,    # hambaarsti külastus
+    hc884_,    # gripivaktsiin
+    hc885_,    # silmaarsti kontroll
+    hc886_,    # mammograaf (ainult naised)
+    hc887_,    # käärsoole vähisõeluuring
+    # Rahuldamata vajadus — kulud
+    hc841d1, hc841d2, hc841d3, hc841d4, hc841d5, hc841d6, hc841d7, hc841dno,
+    # Rahuldamata vajadus — kättesaadavus
+    hc843d1, hc843d2, hc843d3, hc843d4, hc843d5, hc843d6, hc843d7, hc843dno,
+    # Kontekst / segaja
+    hc113_,    # täiendav ravikindlustus
+    hc125_     # rahulolu ravikindlustusega
+  )
+
+glimpse(hc_ee)
+```
+## Lisame nüüd kaalud ka
+
+```{r}
+gv_weights <- read_sav(file.path(DATA_DIR, "sharew9_rel9-0-0_gv_weights.sav"))
+
+weights_ee <- gv_weights |>
+  filter(country == 35) |>
+  select(
+    mergeid,
+    cciw_w9,   # calibrated cross-sectional individual weight
+    dw_w9      # design weight (varuks)
+  )
+
+glimpse(weights_ee)
+```
+
+## Lisame ee-CV ka
+
+```{r}
+ee_cv <- ee_50 |>
+  select(
+    mergeid,
+    age2022,
+    gender,
+    hhsize,
+    partnerinhh,
+    psu,
+    stratum1
+  )
+
+glimpse(ee_cv)
+```
+
+### Valed nimed, vaatame, mis on õiged
+
+```{r}
+names(ee_50)
+```
+
+```{r}
+names(gv_weights |> filter(country == 35))
+```
+
+```{r}
+weights_ee <- gv_weights |>
+  filter(country == 35) |>
+  select(
+    mergeid,
+    cciw_w9,   # calibrated cross-sectional individual weight
+    dw_w9,     # design weight (varuks)
+    psu,       # primary sampling unit — kaalutud analüüsiks
+    stratum1   # kihistus — kaalutud analüüsiks
+  )
+
+glimpse(weights_ee)
+```
+
+```{r}
+ee_cv <- ee_50 |>
+  select(
+    mergeid,
+    age2022,
+    gender,
+    hhsize,
+    partnerinhh
+  )
+
+glimpse(ee_cv)
+```
+
+##Nüüd ühendame
+
+```{r}
+andmed <- ee_cv |>
+  left_join(dn_ee,      by = "mergeid") |>
+  left_join(isced_ee,   by = "mergeid") |>
+  left_join(ep_ee,      by = "mergeid") |>
+  left_join(imp_ee,     by = "mergeid") |>
+  left_join(sn_ee,      by = "mergeid") |>
+  left_join(ph_ee,      by = "mergeid") |>
+  left_join(health_ee,  by = "mergeid") |>
+  left_join(hc_ee,      by = "mergeid") |>
+  left_join(weights_ee, by = "mergeid")
+
+glimpse(andmed)
+nrow(andmed)
+```
+
+##### Mida tegime:
+Ehitasime 01_andmete_import.qmd samm-sammult RStudios
+Laadisime 9 SHARE moodulit (cv_r, dn, gv_isced, ep, gv_imputations, sn, ph, gv_health, hc, gv_weights)
+Selgitasime välja hc mooduli muutujad (arsti kontaktid, haiglaravi, ennetav, rahuldamata vajadus)
+Ühendasime kõik moodulid üheks andmestikuks (4453 rida, 52 veergu)
+Tegime olulisi metodoloogilisi otsuseid
